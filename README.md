@@ -1,4 +1,4 @@
-# Conv-Cup '26 Submission: Tactical Lookahead Agent
+# Conv-Cup '26 Submission: botsync
 
 ## 1. Executable agent
 Launch command (from `submission.json`), run from the archive root:
