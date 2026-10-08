@@ -1,4 +1,4 @@
 {
-  "name": "Conv-Cup Tactical Lookahead",
+  "name": "botsync",
   "command": ["python", "-m", "team_bot.bot", "--model", "team_bot/models/policy.json"]
 }
