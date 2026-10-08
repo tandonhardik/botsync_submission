@@ -1,8 +1,3 @@
-"""Lookahead tactical policy for the AI Soccer Arena (Conv-Cup '26).
-
-Standard library only. Decision time is budgeted well below the 2 s deadline.
-The FEATURES switches allow A/B testing each improvement in a local harness.
-"""
 from __future__ import annotations
 
 import heapq
@@ -11,9 +6,9 @@ import sys
 import time
 from typing import Any
 
-# --------------------------------------------------------------------------------------
+
 # Feature switches (set a value to False to fall back to the older behaviour)
-# --------------------------------------------------------------------------------------
+
 FEATURES = {
     "joint_kick": True,        # evaluate kicks from the post-move origin, choose (move, kick) jointly
     "fine_verify": True,       # re-check top kick candidates at the engine's ball resolution
@@ -29,9 +24,9 @@ F = FEATURES
 TIME_BUDGET = 0.80            # seconds per decision (hard limit is 2.0 s)
 SHOT_SLICE = 0.08             # seconds of shot-map building allowed per decision
 
-# --------------------------------------------------------------------------------------
-# Constants (match config/game.json)
-# --------------------------------------------------------------------------------------
+
+# Constants
+
 DIRECTION_VECTORS = {
     "STAY": (0, 0),
     "UP": (0, 1),
@@ -91,9 +86,9 @@ def direction_toward(dx: float, dy: float, dead_zone: float = 1.0) -> str:
     return f"{vertical}_{horizontal}" if vertical and horizontal else vertical or horizontal or "STAY"
 
 
-# --------------------------------------------------------------------------------------
+
 # Per-observation context
-# --------------------------------------------------------------------------------------
+
 class Ctx:
     def __init__(self, observation: dict[str, Any], deadline: float | None = None) -> None:
         state = observation["state"]
@@ -149,7 +144,7 @@ class Ctx:
     def out_of_time(self) -> bool:
         return time.perf_counter() > self.deadline
 
-    # ---- geometry helpers ----
+    # geometry helpers
     def circle_hits_obstacle(self, x: float, y: float, r: float) -> bool:
         for x0, y0, x1, y1 in self.obstacles:
             cx = x0 if x < x0 else x1 if x > x1 else x
@@ -188,7 +183,7 @@ class Ctx:
                 return False
         return True
 
-    # ---- flood-fill navigation fields ----
+    # flood-fill navigation fields
     def free_grid(self):
         cached = _GRID_CACHE.get(self.layout)
         if cached is not None:
@@ -202,8 +197,6 @@ class Ctx:
         return _GRID_CACHE[self.layout]
 
     def nav_field(self, target: tuple[float, float], stops=None, full: bool = False):
-        """Dijkstra distances (in cells) from ``target``. Stops shortly after reaching ``stops``
-        (default: our own position) unless ``full`` is set."""
         free, cell, nx, ny = self.free_grid()
         tx = int(_clamp(target[0] / cell, 0, nx - 1))
         ty = int(_clamp(target[1] / cell, 0, ny - 1))
@@ -251,7 +244,6 @@ class Ctx:
         return dist, cell, nx, ny
 
     def cached_field(self, target: tuple[float, float]):
-        """Full distance field for a static target; computed once per obstacle layout."""
         key = (self.layout, round(target[0] / 2.0), round(target[1] / 2.0))
         field = _FIELD_CACHE.get(key)
         if field is None:
@@ -273,7 +265,6 @@ class Ctx:
 
 def navigate(ctx: Ctx, target: tuple[float, float], stop_distance: float = 0.0, allow_stay: bool = True,
              field=None, cache: bool = False) -> str:
-    """Return the best move toward ``target`` honouring obstacles."""
     me = ctx.me
     dx, dy = target[0] - me[0], target[1] - me[1]
     distance = math.hypot(dx, dy)
@@ -313,9 +304,9 @@ def navigate(ctx: Ctx, target: tuple[float, float], stop_distance: float = 0.0, 
     return best[1]
 
 
-# --------------------------------------------------------------------------------------
-# Ball physics (mirrors the engine; coarse for pruning, fine for verification)
-# --------------------------------------------------------------------------------------
+
+# Ball physics
+
 def ball_trace(ctx: Ctx, x: float, y: float, ux: float, uy: float, distance: float, max_steps: int = 14,
                ball_speed: float | None = None, substep: float = PLAN_SUBSTEP):
     """Simulate a ball. Returns (points, goal); points are (t, x, y, travelled) and goal is
@@ -383,16 +374,15 @@ def _kick_trace(ctx: Ctx, sx: float, sy: float, direction: str, fine: bool):
     return cached
 
 
-# --------------------------------------------------------------------------------------
+
 # Kick evaluation
-# --------------------------------------------------------------------------------------
+
 def _race_time(ctx: Ctx, pos: tuple[float, float], target: tuple[float, float]) -> float:
     return max(0.0, math.hypot(pos[0] - target[0], pos[1] - target[1]) - POSSESSION_RADIUS) / ctx.speed
 
 
 def evaluate_kicks(ctx: Ctx, pos: tuple[float, float], opp: tuple[float, float], directions: list[str],
                    danger: float = 1.0, t_offset: float = 0.0, fine: bool = False):
-    """Return list of (value, direction, power, info) for every kick candidate from ``pos``."""
     results = []
     sign = ctx.sign
     for direction in directions:
@@ -452,9 +442,9 @@ def evaluate_kicks(ctx: Ctx, pos: tuple[float, float], opp: tuple[float, float],
     return results
 
 
-# --------------------------------------------------------------------------------------
+
 # Shot map: which cells have a clean scoring lane (ignoring the opponent), built lazily
-# --------------------------------------------------------------------------------------
+
 def _shot_state(ctx: Ctx):
     key = (ctx.layout, ctx.sign)
     state = _SHOT_CACHE.get(key)
@@ -493,7 +483,6 @@ def _shot_state(ctx: Ctx):
 
 
 def shot_target(ctx: Ctx):
-    """Nearest (by path) cell with a scoring lane, or None if we already stand in one."""
     state = _shot_state(ctx)
     shots = state["shots"]
     if not shots:
@@ -528,9 +517,9 @@ def make_progress(ctx: Ctx):
     return lambda pos: _clamp((base - ctx.nav_cost(field, pos, target)) / speed, -1.5, 1.5)
 
 
-# --------------------------------------------------------------------------------------
+
 # Tactical logic
-# --------------------------------------------------------------------------------------
+
 def _forward_dirs(ctx: Ctx, wide: bool = False) -> list[str]:
     a = ctx.attack
     base = [a, f"{a}_LEFT", f"{a}_RIGHT"]
@@ -546,8 +535,6 @@ def _best_kick(ctx: Ctx, pos, opp, directions) -> tuple[float, str, int]:
 
 
 def best_joint_kick(ctx: Ctx, directions: list[str], prog_fn):
-    """Best (value, move, direction, power). The ball leaves from the post-move position,
-    so every kick is evaluated from where we will actually stand."""
     me, opp = ctx.me, ctx.opp
     options = [("STAY", me)]
     for move in ctx.valid_moves():
@@ -587,8 +574,6 @@ def _approach(pos, target, speed):
 
 
 def urgency(ctx: Ctx) -> float:
-    """>0 when we need goals (behind / tied late), <0 when protecting a lead.
-    Aggregate goals can decide a series, so lead protection is deliberately mild."""
     elapsed = ctx.iteration / ctx.max_iter
     if ctx.lead < 0:
         boost = 0.3 if (elapsed > 0.6 and ctx.goals_left <= 2) else 0.0
@@ -599,7 +584,6 @@ def urgency(ctx: Ctx) -> float:
 
 
 def _follow(ctx: Ctx, opp, pos, steps: float):
-    """Where a chasing opponent ends up: closes on ``pos`` but cannot overlap us (contact distance)."""
     d = math.hypot(opp[0] - pos[0], opp[1] - pos[1])
     keep = max(2 * ctx.radius, d - ctx.speed * steps)
     if d <= keep or d < 1e-9:
@@ -626,7 +610,7 @@ def attack_with_ball(ctx: Ctx) -> dict[str, Any]:
         return {"move": navigate(ctx, ctx.opp_goal, allow_stay=False, cache=True)}
     now_value, now_move, now_dir, now_power = joint
 
-    # --- situational aggression -------------------------------------------------------
+    # situational aggression 
     urg = urgency(ctx)
     bias = ctx.dribble_bias
     progress_weight = 0.4 + 1.0 * max(0.0, urg)
@@ -651,7 +635,7 @@ def attack_with_ball(ctx: Ctx) -> dict[str, Any]:
                 break
             ux, uy = UNIT[move]
             if not F["nav_progress"] and uy * sign < -0.5:
-                continue  # legacy: never carry the ball backwards
+                continue  
             first = ctx.step_pos(me, move)
             pos, best_k = me, None
             for k in range(1, LOOKAHEAD + 1):
@@ -661,7 +645,7 @@ def attack_with_ball(ctx: Ctx) -> dict[str, Any]:
                 opp_k = _follow(ctx, opp, pos, k)
                 gap = math.hypot(opp_k[0] - pos[0], opp_k[1] - pos[1])
                 if s + k >= SAFE_CARRY_STEPS and gap <= TACKLE_CONTACT + 0.5:
-                    break  # a tackle becomes possible: we must have kicked by then
+                    break  
                 value, _, _ = _best_kick(ctx, pos, opp_k, kick_dirs)
                 value *= 0.93 ** k
                 if best_k is None or value > best_k:
@@ -687,7 +671,6 @@ def attack_with_ball(ctx: Ctx) -> dict[str, Any]:
 
 
 def defend_goal_side(ctx: Ctx) -> tuple[float, float]:
-    """Target point between the opposing ball carrier and our goal."""
     ox, oy = ctx.opp
     gx, gy = ctx.my_goal
     d = math.hypot(gx - ox, gy - oy) or 1.0
@@ -736,7 +719,6 @@ def chase_loose_ball(ctx: Ctx) -> str:
 
 
 def flip_ctx(ctx: Ctx) -> Ctx:
-    """The same position seen from the opponent's side (it attacks our goal)."""
     f = Ctx.__new__(Ctx)
     f.__dict__.update(ctx.__dict__)
     f.sign = -ctx.sign
@@ -753,8 +735,6 @@ def _threat(fctx: Ctx, shooter, defender, t_offset: float = 0.0) -> float:
 
 
 def defensive_move(ctx: Ctx, shooter, t_offset: float = 0.0, pull=None, spread: bool = False) -> str:
-    """Pick the move that minimises the opponent's best shot; tie-break toward ``pull``.
-    With ``spread`` the shooter may also step before kicking, so take its worst-case post-move spot."""
     fctx = flip_ctx(ctx)
     me = ctx.me
     shooters = [shooter]
@@ -799,7 +779,6 @@ def tactical_action(observation: dict[str, Any], no_kick: bool = False, variant:
 
 
 def fallback_action(observation: dict[str, Any]) -> dict[str, Any]:
-    """Cheap, safe behaviour used if the main logic raises: tackle, chase, or kick forward."""
     ctx = Ctx(observation)
     if ctx.possession == ctx.player_id:
         move = navigate(ctx, ctx.opp_goal, allow_stay=False)
@@ -811,7 +790,6 @@ def fallback_action(observation: dict[str, Any]) -> dict[str, Any]:
 
 
 class Policy:
-    """Lookahead tactical policy. The model file passed on the command line is not needed."""
 
     def __init__(self, *_args, **_kwargs) -> None:
         self.last_sig = None
@@ -826,7 +804,6 @@ class Policy:
         return cls()
 
     def _stall_guard(self, observation: dict[str, Any]) -> bool:
-        """True while we are stuck re-collecting our own kick in the same spot."""
         state = observation["state"]
         me = state["players"][observation["player_id"]]
         ball = state["ball"]
@@ -841,7 +818,6 @@ class Policy:
         return iteration <= self.no_kick_until
 
     def _loop_detect(self, observation: dict[str, Any]) -> None:
-        """The game is deterministic, so an exactly repeated state means a loop: change tactic."""
         if not F["loop_detect"]:
             return
         state = observation["state"]
