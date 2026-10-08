@@ -1,8 +1,0 @@
-__pycache__/
-*.pyc
-logs/
-tmp/
-.venv/
-venv/
-dist/
-*.zip
